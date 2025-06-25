@@ -27,10 +27,11 @@
   <script>
     async function fetchPrice() {
       try {
-        const proxy = 'https://api.allorigins.win/raw?url=';
+        const proxy = 'https://api.allorigins.win/get?url=';
         const target = 'https://hourlypricing.comed.com/api?type=5minutefeed';
         const response = await fetch(proxy + encodeURIComponent(target));
-        const data = await response.json();
+        const wrapper = await response.json();
+        const data = JSON.parse(wrapper.contents);
         const latest = data[data.length - 1];
         document.getElementById('price').innerText =
           `$${latest.price} at ${latest.datetime}`;
