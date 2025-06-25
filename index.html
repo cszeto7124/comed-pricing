@@ -21,14 +21,41 @@
       color: darkgreen;
       font-size: 1.5em;
     }
+    button {
+      margin-top: 1em;
+    }
   </style>
 </head>
 <body>
   <h1>Live ComEd 5-Minute Electricity Price</h1>
   <div id="price">Loading...</div>
   <div id="stats"></div>
+  <button onclick="requestNotificationPermission()">Enable Price Alerts</button>
 
   <script>
+    let alertedAlready = false;
+
+    function requestNotificationPermission() {
+      if ('Notification' in window) {
+        Notification.requestPermission().then(result => {
+          if (result === 'granted') {
+            alert('Notifications enabled! You will be alerted if price > 20¢.');
+          } else {
+            alert('Notifications not enabled.');
+          }
+        });
+      }
+    }
+
+    function sendNotification(price, time) {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification(`⚠️ High Price Alert`, {
+          body: `Price is ${price}¢/kWh at ${time}`,
+          icon: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Lightbulb_icon.svg/512px-Lightbulb_icon.svg.png'
+        });
+      }
+    }
+
     async function fetchPrice() {
       try {
         const proxy = 'https://api.allorigins.win/get?url=';
@@ -37,10 +64,8 @@
         const wrapper = await response.json();
         const data = JSON.parse(wrapper.contents);
 
-        // Sort oldest → newest
         data.sort((a, b) => parseInt(a.millisUTC) - parseInt(b.millisUTC));
 
-        // Get most recent data
         const latest = data[data.length - 1];
         const latestPrice = parseFloat(latest.price).toFixed(1);
         const latestTime = new Date(Number(latest.millisUTC)).toLocaleString();
@@ -48,7 +73,15 @@
         document.getElementById('price').innerHTML =
           `<span class="highlight">${latestPrice}¢/kWh</span> at ${latestTime}`;
 
-        // Stats: high, low, average
+        // Alert if above 20¢ and not already alerted
+        if (parseFloat(latestPrice) > 20 && !alertedAlready) {
+          sendNotification(latestPrice, latestTime);
+          alertedAlready = true;
+        } else if (parseFloat(latestPrice) <= 20) {
+          alertedAlready = false; // reset if price drops
+        }
+
+        // High, Low, Avg
         let high = { price: -Infinity, time: null };
         let low = { price: Infinity, time: null };
         let total = 0;
@@ -84,7 +117,7 @@
     }
 
     fetchPrice();
-    setInterval(fetchPrice, 300000); // refresh every 5 min
+    setInterval(fetchPrice, 300000); // refresh every 5 minutes
   </script>
 </body>
 </html>
