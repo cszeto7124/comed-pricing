@@ -28,7 +28,7 @@
     async function fetchPrice() {
       try {
         const proxy = 'https://api.allorigins.win/raw?url=';
-        const target = 'https://hourlypricing.comed.com/api?type=5min';
+        const target = 'https://hourlypricing.comed.com/api?type=5minutefeed';
         const response = await fetch(proxy + encodeURIComponent(target));
         const data = await response.json();
         const latest = data[data.length - 1];
@@ -41,7 +41,7 @@
     }
 
     fetchPrice();
-    setInterval(fetchPrice, 300000); // Refresh every 5 minutes
+    setInterval(fetchPrice, 300000); // every 5 minutes
   </script>
 </body>
 </html>
