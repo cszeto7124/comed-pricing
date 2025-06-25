@@ -13,7 +13,7 @@
     h1 {
       font-size: 1.5em;
     }
-    #price, #stats {
+    #price, #stats, #forecast {
       font-size: 1.2em;
       margin-top: 1em;
     }
@@ -29,6 +29,7 @@
 <body>
   <h1>Live ComEd 5-Minute Electricity Price</h1>
   <div id="price">Loading...</div>
+  <div id="forecast"></div>
   <div id="stats"></div>
   <button onclick="requestNotificationPermission()">Enable Price Alerts</button>
 
@@ -67,11 +68,13 @@
 
     async function fetchPrice() {
       try {
-        // Append cache-busting timestamp
-        const timestamp = Date.now();
+        const now = Date.now();
+        const tenMinutesLater = now + 10 * 60 * 1000;
+
+        // Append timestamp to avoid caching
         const proxy = 'https://api.allorigins.win/get?url=';
         const baseURL = 'https://hourlypricing.comed.com/api?type=5minutefeed';
-        const url = proxy + encodeURIComponent(baseURL + `&t=${timestamp}`);
+        const url = proxy + encodeURIComponent(baseURL + `&t=${now}`);
 
         const response = await fetch(url);
         const wrapper = await response.json();
@@ -79,44 +82,63 @@
 
         data.sort((a, b) => parseInt(a.millisUTC) - parseInt(b.millisUTC));
 
-        const latest = data[data.length - 1];
-        const latestPrice = parseFloat(latest.price).toFixed(1);
-        const latestTime = new Date(Number(latest.millisUTC)).toLocaleString();
+        // === CURRENT PRICE (latest past or current) ===
+        const currentEntry = [...data].reverse().find(d => Number(d.millisUTC) <= now);
+        const currentPrice = parseFloat(currentEntry.price).toFixed(1);
+        const currentTime = new Date(Number(currentEntry.millisUTC)).toLocaleString();
 
         document.getElementById('price').innerHTML =
-          `<span class="highlight">${latestPrice}¢/kWh</span> at ${latestTime}`;
+          `<span class="highlight">${currentPrice}¢/kWh</span> at ${currentTime}`;
 
-        // Alert if above 20¢ and not already alerted
-        if (parseFloat(latestPrice) > 20 && !alertedAlready) {
-          sendNotification(latestPrice, latestTime);
+        if (parseFloat(currentPrice) > 20 && !alertedAlready) {
+          sendNotification(currentPrice, currentTime);
           alertedAlready = true;
-        } else if (parseFloat(latestPrice) <= 20) {
+        } else if (parseFloat(currentPrice) <= 20) {
           alertedAlready = false;
         }
 
-        // Stats: high, low, average
+        // === FORECAST (next 5–10 min) ===
+        const forecastEntry = data.find(d => {
+          const t = Number(d.millisUTC);
+          return t > now && t <= tenMinutesLater;
+        });
+
+        if (forecastEntry) {
+          const forecastPrice = parseFloat(forecastEntry.price).toFixed(1);
+          const forecastTime = new Date(Number(forecastEntry.millisUTC)).toLocaleTimeString();
+          document.getElementById('forecast').innerHTML =
+            `<strong>Next Forecast:</strong> ${forecastPrice}¢ at ${forecastTime}`;
+        } else {
+          document.getElementById('forecast').innerHTML = '';
+        }
+
+        // === HIGH / LOW / AVERAGE (only past or now) ===
         let high = { price: -Infinity, time: null };
         let low = { price: Infinity, time: null };
         let total = 0;
+        let count = 0;
 
         data.forEach(entry => {
           const price = parseFloat(entry.price);
-          total += price;
+          const timeMs = Number(entry.millisUTC);
 
-          const time = new Date(Number(entry.millisUTC)).toLocaleTimeString();
+          if (timeMs > now) return; // ignore future values
+
+          const time = new Date(timeMs).toLocaleTimeString();
+          total += price;
+          count++;
 
           if (price > high.price) {
             high.price = price;
             high.time = time;
           }
-
           if (price < low.price) {
             low.price = price;
             low.time = time;
           }
         });
 
-        const avg = (total / data.length).toFixed(1);
+        const avg = count > 0 ? (total / count).toFixed(1) : 'N/A';
 
         document.getElementById('stats').innerHTML = `
           <p><strong>High:</strong> ${high.price}¢ at ${high.time}</p>
@@ -130,7 +152,7 @@
     }
 
     fetchPrice();
-    setInterval(fetchPrice, 60000); // refresh every 60 seconds
+    setInterval(fetchPrice, 60000); // refresh every 60 sec
   </script>
 </body>
 </html>
