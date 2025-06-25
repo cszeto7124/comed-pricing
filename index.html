@@ -13,16 +13,20 @@
     h1 {
       font-size: 1.5em;
     }
-    #price {
-      font-size: 2em;
+    #price, #stats {
+      font-size: 1.2em;
       margin-top: 1em;
+    }
+    .highlight {
       color: darkgreen;
+      font-size: 1.5em;
     }
   </style>
 </head>
 <body>
   <h1>Live ComEd 5-Minute Electricity Price</h1>
   <div id="price">Loading...</div>
+  <div id="stats"></div>
 
   <script>
     async function fetchPrice() {
@@ -32,9 +36,45 @@
         const response = await fetch(proxy + encodeURIComponent(target));
         const wrapper = await response.json();
         const data = JSON.parse(wrapper.contents);
+
+        // Sort in case it's not in order
+        data.sort((a, b) => parseInt(a.millisUTC) - parseInt(b.millisUTC));
+
+        // Most recent price
         const latest = data[data.length - 1];
-        document.getElementById('price').innerText =
-          `$${latest.price} at ${latest.datetime}`;
+        const latestTime = new Date(parseInt(latest.millisUTC)).toLocaleString();
+        const latestPrice = parseFloat(latest.price).toFixed(1);
+
+        document.getElementById('price').innerHTML =
+          `<span class="highlight">${latestPrice}¢/kWh</span> at ${latestTime}`;
+
+        // Calculate high, low, average
+        let high = { price: -Infinity, time: null };
+        let low = { price: Infinity, time: null };
+        let total = 0;
+
+        data.forEach(entry => {
+          const price = parseFloat(entry.price);
+          total += price;
+
+          if (price > high.price) {
+            high.price = price;
+            high.time = new Date(parseInt(entry.millisUTC)).toLocaleTimeString();
+          }
+
+          if (price < low.price) {
+            low.price = price;
+            low.time = new Date(parseInt(entry.millisUTC)).toLocaleTimeString();
+          }
+        });
+
+        const avg = (total / data.length).toFixed(1);
+
+        document.getElementById('stats').innerHTML = `
+          <p><strong>High:</strong> ${high.price}¢ at ${high.time}</p>
+          <p><strong>Low:</strong> ${low.price}¢ at ${low.time}</p>
+          <p><strong>Average:</strong> ${avg}¢</p>
+        `;
       } catch (error) {
         document.getElementById('price').innerText = 'Error loading price.';
         console.error('Failed to fetch ComEd data:', error);
