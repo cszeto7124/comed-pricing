@@ -1,29 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>ComEd 5-Minute Prices</title>
+  <meta charset="UTF-8" />
+  <title>ComEd 5-Minute Electricity Price</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      padding: 2em;
-      background: #f4f4f4;
-      color: #333;
-    }
-    h1 {
-      font-size: 1.5em;
-    }
-    #price, #stats, #forecast {
-      font-size: 1.2em;
-      margin-top: 1em;
-    }
-    .highlight {
-      color: darkgreen;
-      font-size: 1.5em;
-    }
-    button {
-      margin-top: 1em;
-    }
+    body { font-family: Arial, sans-serif; padding: 2em; background: #f4f4f4; color: #333; }
+    h1 { font-size: 1.5em; }
+    .highlight { color: darkgreen; font-size: 1.5em; }
+    #price, #forecast, #stats { margin-top: 1em; font-size: 1.2em; }
+    button { margin-top: 1em; }
+    canvas { margin-top: 2em; }
   </style>
 </head>
 <body>
@@ -32,34 +19,27 @@
   <div id="forecast"></div>
   <div id="stats"></div>
   <button onclick="requestNotificationPermission()">Enable Price Alerts</button>
+  <canvas id="priceChart" width="800" height="300"></canvas>
 
   <script>
     let alertedAlready = false;
+    let chart;
 
     function requestNotificationPermission() {
-      if (!('Notification' in window)) {
-        alert('This browser does not support notifications.');
-        return;
-      }
-
+      if (!('Notification' in window)) return;
       if (Notification.permission === 'granted') {
-        alert('Notifications are already enabled!');
-      } else if (Notification.permission !== 'denied') {
-        Notification.requestPermission().then(permission => {
-          if (permission === 'granted') {
-            alert('✅ Notifications enabled! You’ll get alerts when price > 20¢.');
-          } else {
-            alert('❌ Notifications not enabled.');
-          }
-        });
+        alert('Notifications already enabled!');
       } else {
-        alert('❌ You have blocked notifications for this site.');
+        Notification.requestPermission().then(p => {
+          if (p === 'granted') alert('✅ Notifications enabled.');
+          else alert('❌ Notifications denied.');
+        });
       }
     }
 
     function sendNotification(price, time) {
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification(`⚠️ High Price Alert`, {
+      if (Notification.permission === 'granted') {
+        new Notification('⚠️ High Price Alert', {
           body: `Price is ${price}¢/kWh at ${time}`,
           icon: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Lightbulb_icon.svg/512px-Lightbulb_icon.svg.png'
         });
@@ -67,92 +47,101 @@
     }
 
     async function fetchPrice() {
+      const now = Date.now();
+      const tenMinLater = now + 10 * 60 * 1000;
+      const proxy = 'https://api.allorigins.win/get?url=';
+      const base = 'https://hourlypricing.comed.com/api?type=5minutefeed';
+      const url = proxy + encodeURIComponent(base + `&t=${now}`);
+
       try {
-        const now = Date.now();
-        const tenMinutesLater = now + 10 * 60 * 1000;
-
-        // Append timestamp to avoid caching
-        const proxy = 'https://api.allorigins.win/get?url=';
-        const baseURL = 'https://hourlypricing.comed.com/api?type=5minutefeed';
-        const url = proxy + encodeURIComponent(baseURL + `&t=${now}`);
-
-        const response = await fetch(url);
-        const wrapper = await response.json();
+        const res = await fetch(url);
+        const wrapper = await res.json();
         const data = JSON.parse(wrapper.contents);
+        data.sort((a, b) => a.millisUTC - b.millisUTC);
 
-        data.sort((a, b) => parseInt(a.millisUTC) - parseInt(b.millisUTC));
+        const history = data.filter(d => Number(d.millisUTC) <= now);
+        const future = data.find(d => Number(d.millisUTC) > now && Number(d.millisUTC) <= tenMinLater);
 
-        // === CURRENT PRICE (latest past or current) ===
-        const currentEntry = [...data].reverse().find(d => Number(d.millisUTC) <= now);
-        const currentPrice = parseFloat(currentEntry.price).toFixed(1);
-        const currentTime = new Date(Number(currentEntry.millisUTC)).toLocaleString();
+        const current = [...data].reverse().find(d => Number(d.millisUTC) <= now);
+        const price = parseFloat(current.price).toFixed(1);
+        const time = new Date(Number(current.millisUTC)).toLocaleString();
 
         document.getElementById('price').innerHTML =
-          `<span class="highlight">${currentPrice}¢/kWh</span> at ${currentTime}`;
+          `<span class="highlight">${price}¢/kWh</span> at ${time}`;
 
-        if (parseFloat(currentPrice) > 20 && !alertedAlready) {
-          sendNotification(currentPrice, currentTime);
+        if (parseFloat(price) > 20 && !alertedAlready) {
+          sendNotification(price, time);
           alertedAlready = true;
-        } else if (parseFloat(currentPrice) <= 20) {
+        } else if (parseFloat(price) <= 20) {
           alertedAlready = false;
         }
 
-        // === FORECAST (next 5–10 min) ===
-        const forecastEntry = data.find(d => {
-          const t = Number(d.millisUTC);
-          return t > now && t <= tenMinutesLater;
-        });
-
-        if (forecastEntry) {
-          const forecastPrice = parseFloat(forecastEntry.price).toFixed(1);
-          const forecastTime = new Date(Number(forecastEntry.millisUTC)).toLocaleTimeString();
+        if (future) {
+          const fPrice = parseFloat(future.price).toFixed(1);
+          const fTime = new Date(Number(future.millisUTC)).toLocaleTimeString();
           document.getElementById('forecast').innerHTML =
-            `<strong>Next Forecast:</strong> ${forecastPrice}¢ at ${forecastTime}`;
+            `<strong>Next Forecast:</strong> ${fPrice}¢ at ${fTime}`;
         } else {
           document.getElementById('forecast').innerHTML = '';
         }
 
-        // === HIGH / LOW / AVERAGE (only past or now) ===
         let high = { price: -Infinity, time: null };
         let low = { price: Infinity, time: null };
         let total = 0;
-        let count = 0;
 
-        data.forEach(entry => {
-          const price = parseFloat(entry.price);
-          const timeMs = Number(entry.millisUTC);
-
-          if (timeMs > now) return; // ignore future values
-
-          const time = new Date(timeMs).toLocaleTimeString();
-          total += price;
-          count++;
-
-          if (price > high.price) {
-            high.price = price;
-            high.time = time;
-          }
-          if (price < low.price) {
-            low.price = price;
-            low.time = time;
-          }
+        history.forEach(entry => {
+          const p = parseFloat(entry.price);
+          total += p;
+          const t = new Date(Number(entry.millisUTC)).toLocaleTimeString();
+          if (p > high.price) high = { price: p, time: t };
+          if (p < low.price) low = { price: p, time: t };
         });
 
-        const avg = count > 0 ? (total / count).toFixed(1) : 'N/A';
-
+        const avg = (total / history.length).toFixed(1);
         document.getElementById('stats').innerHTML = `
           <p><strong>High:</strong> ${high.price}¢ at ${high.time}</p>
           <p><strong>Low:</strong> ${low.price}¢ at ${low.time}</p>
           <p><strong>Average:</strong> ${avg}¢</p>
         `;
-      } catch (error) {
-        document.getElementById('price').innerText = 'Error loading price.';
-        console.error('Fetch error:', error);
+
+        renderChart(history);
+      } catch (e) {
+        console.error(e);
+        document.getElementById('price').innerText = 'Error loading data.';
       }
     }
 
+    function renderChart(history) {
+      const labels = history.map(d => new Date(Number(d.millisUTC)).toLocaleTimeString());
+      const prices = history.map(d => parseFloat(d.price));
+
+      const ctx = document.getElementById('priceChart').getContext('2d');
+
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Actual Price (¢/kWh)',
+            data: prices,
+            borderColor: 'green',
+            tension: 0.3,
+            fill: false
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { ticks: { autoSkip: true, maxTicksLimit: 12 } },
+            y: { beginAtZero: true }
+          }
+        }
+      });
+    }
+
     fetchPrice();
-    setInterval(fetchPrice, 60000); // refresh every 60 sec
+    setInterval(fetchPrice, 60000); // refresh every minute
   </script>
 </body>
 </html>
