@@ -36,14 +36,23 @@
     let alertedAlready = false;
 
     function requestNotificationPermission() {
-      if ('Notification' in window) {
-        Notification.requestPermission().then(result => {
-          if (result === 'granted') {
-            alert('Notifications enabled! You will be alerted if price > 20¢.');
+      if (!('Notification' in window)) {
+        alert('This browser does not support notifications.');
+        return;
+      }
+
+      if (Notification.permission === 'granted') {
+        alert('Notifications are already enabled!');
+      } else if (Notification.permission !== 'denied') {
+        Notification.requestPermission().then(permission => {
+          if (permission === 'granted') {
+            alert('✅ Notifications enabled! You’ll get alerts when price > 20¢.');
           } else {
-            alert('Notifications not enabled.');
+            alert('❌ Notifications not enabled.');
           }
         });
+      } else {
+        alert('❌ You have blocked notifications for this site.');
       }
     }
 
@@ -58,9 +67,13 @@
 
     async function fetchPrice() {
       try {
+        // Append cache-busting timestamp
+        const timestamp = Date.now();
         const proxy = 'https://api.allorigins.win/get?url=';
-        const target = 'https://hourlypricing.comed.com/api?type=5minutefeed';
-        const response = await fetch(proxy + encodeURIComponent(target));
+        const baseURL = 'https://hourlypricing.comed.com/api?type=5minutefeed';
+        const url = proxy + encodeURIComponent(baseURL + `&t=${timestamp}`);
+
+        const response = await fetch(url);
         const wrapper = await response.json();
         const data = JSON.parse(wrapper.contents);
 
@@ -78,10 +91,10 @@
           sendNotification(latestPrice, latestTime);
           alertedAlready = true;
         } else if (parseFloat(latestPrice) <= 20) {
-          alertedAlready = false; // reset if price drops
+          alertedAlready = false;
         }
 
-        // High, Low, Avg
+        // Stats: high, low, average
         let high = { price: -Infinity, time: null };
         let low = { price: Infinity, time: null };
         let total = 0;
@@ -117,7 +130,7 @@
     }
 
     fetchPrice();
-    setInterval(fetchPrice, 300000); // refresh every 5 minutes
+    setInterval(fetchPrice, 60000); // refresh every 60 seconds
   </script>
 </body>
 </html>
