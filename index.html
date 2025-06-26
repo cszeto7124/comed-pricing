@@ -1,147 +1,111 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>ComEd 5-Minute Electricity Price</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ComEd 5-Minute Electricity Price Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; padding: 2em; background: #f4f4f4; color: #333; }
+    body { font-family: Arial, sans-serif; background: #f5f5f5; color: #222; padding: 20px; }
     h1 { font-size: 1.5em; }
-    .highlight { color: darkgreen; font-size: 1.5em; }
-    #price, #forecast, #stats { margin-top: 1em; font-size: 1.2em; }
-    button { margin-top: 1em; }
-    canvas { margin-top: 2em; }
+    #price, #stats { font-size: 1.2em; color: green; }
+    canvas { max-width: 100%; height: auto; margin-top: 20px; }
   </style>
 </head>
 <body>
   <h1>Live ComEd 5-Minute Electricity Price</h1>
   <div id="price">Loading...</div>
-  <div id="forecast"></div>
   <div id="stats"></div>
-  <button onclick="requestNotificationPermission()">Enable Price Alerts</button>
-  <canvas id="priceChart" width="800" height="300"></canvas>
+  <button id="notifyBtn">Enable Price Alerts</button>
+  <canvas id="priceChart"></canvas>
 
   <script>
-    let alertedAlready = false;
+    const API_URL = "https://hourlypricing.comed.com/api?type=5minutefeed";
+    const notifyThreshold = 20.0;
+    let notified = false;
     let chart;
 
-    function requestNotificationPermission() {
-      if (!('Notification' in window)) return;
-      if (Notification.permission === 'granted') {
-        alert('Notifications already enabled!');
-      } else {
-        Notification.requestPermission().then(p => {
-          if (p === 'granted') alert('✅ Notifications enabled.');
-          else alert('❌ Notifications denied.');
-        });
-      }
-    }
-
-    function sendNotification(price, time) {
-      if (Notification.permission === 'granted') {
-        new Notification('⚠️ High Price Alert', {
-          body: `Price is ${price}¢/kWh at ${time}`,
-          icon: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Lightbulb_icon.svg/512px-Lightbulb_icon.svg.png'
-        });
-      }
-    }
-
-    async function fetchPrice() {
-      const now = Date.now();
-      const tenMinLater = now + 10 * 60 * 1000;
-      const proxy = 'https://api.allorigins.win/get?url=';
-      const base = 'https://hourlypricing.comed.com/api?type=5minutefeed';
-      const url = proxy + encodeURIComponent(base + `&t=${now}`);
-
+    async function fetchPrices() {
       try {
-        const res = await fetch(url);
-        const wrapper = await res.json();
-        const data = JSON.parse(wrapper.contents);
-        data.sort((a, b) => a.millisUTC - b.millisUTC);
+        const res = await fetch(API_URL);
+        const data = await res.json();
 
-        const history = data.filter(d => Number(d.millisUTC) <= now);
-        const future = data.find(d => Number(d.millisUTC) > now && Number(d.millisUTC) <= tenMinLater);
+        if (!data || data.length === 0) throw new Error("No data available");
 
-        const current = [...data].reverse().find(d => Number(d.millisUTC) <= now);
-        const price = parseFloat(current.price).toFixed(1);
-        const time = new Date(Number(current.millisUTC)).toLocaleString();
+        const now = new Date();
+        const today = now.toDateString();
+        const todayData = data.filter(p => new Date(parseInt(p.millisUTC)).toDateString() === today);
 
-        document.getElementById('price').innerHTML =
-          `<span class="highlight">${price}¢/kWh</span> at ${time}`;
+        const current = data[data.length - 1];
+        const currentTime = new Date(parseInt(current.millisUTC));
+        const currentPrice = parseFloat(current.price);
 
-        if (parseFloat(price) > 20 && !alertedAlready) {
-          sendNotification(price, time);
-          alertedAlready = true;
-        } else if (parseFloat(price) <= 20) {
-          alertedAlready = false;
+        const prices = todayData.map(p => parseFloat(p.price));
+        const times = todayData.map(p => new Date(parseInt(p.millisUTC)).toLocaleTimeString());
+
+        const max = Math.max(...prices);
+        const min = Math.min(...prices);
+        const avg = (prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(1);
+        const maxTime = new Date(parseInt(todayData[prices.indexOf(max)].millisUTC)).toLocaleTimeString();
+        const minTime = new Date(parseInt(todayData[prices.indexOf(min)].millisUTC)).toLocaleTimeString();
+
+        document.getElementById("price").innerHTML = `${currentPrice.toFixed(1)}<sup>¢</sup>/kWh at ${currentTime.toLocaleString()}`;
+        document.getElementById("stats").innerHTML = `
+          <strong>High:</strong> ${max.toFixed(1)}¢ at ${maxTime}<br>
+          <strong>Low:</strong> ${min.toFixed(1)}¢ at ${minTime}<br>
+          <strong>Average:</strong> ${avg}¢`;
+
+        // Show notification if above threshold
+        if (Notification.permission === "granted" && currentPrice > notifyThreshold && !notified) {
+          new Notification(`Alert: Price is ${currentPrice.toFixed(1)}¢/kWh`);
+          notified = true;
+        } else if (currentPrice <= notifyThreshold) {
+          notified = false; // reset for future alerts
         }
 
-        if (future) {
-          const fPrice = parseFloat(future.price).toFixed(1);
-          const fTime = new Date(Number(future.millisUTC)).toLocaleTimeString();
-          document.getElementById('forecast').innerHTML =
-            `<strong>Next Forecast:</strong> ${fPrice}¢ at ${fTime}`;
-        } else {
-          document.getElementById('forecast').innerHTML = '';
-        }
+        updateChart(times, prices);
 
-        let high = { price: -Infinity, time: null };
-        let low = { price: Infinity, time: null };
-        let total = 0;
-
-        history.forEach(entry => {
-          const p = parseFloat(entry.price);
-          total += p;
-          const t = new Date(Number(entry.millisUTC)).toLocaleTimeString();
-          if (p > high.price) high = { price: p, time: t };
-          if (p < low.price) low = { price: p, time: t };
-        });
-
-        const avg = (total / history.length).toFixed(1);
-        document.getElementById('stats').innerHTML = `
-          <p><strong>High:</strong> ${high.price}¢ at ${high.time}</p>
-          <p><strong>Low:</strong> ${low.price}¢ at ${low.time}</p>
-          <p><strong>Average:</strong> ${avg}¢</p>
-        `;
-
-        renderChart(history);
-      } catch (e) {
-        console.error(e);
-        document.getElementById('price').innerText = 'Error loading data.';
+      } catch (err) {
+        document.getElementById("price").innerText = "Error loading price.";
+        console.error(err);
       }
     }
 
-    function renderChart(history) {
-      const labels = history.map(d => new Date(Number(d.millisUTC)).toLocaleTimeString());
-      const prices = history.map(d => parseFloat(d.price));
-
-      const ctx = document.getElementById('priceChart').getContext('2d');
-
+    function updateChart(labels, values) {
       if (chart) chart.destroy();
-      chart = new Chart(ctx, {
-        type: 'line',
+      chart = new Chart(document.getElementById("priceChart"), {
+        type: "line",
         data: {
-          labels,
+          labels: labels,
           datasets: [{
-            label: 'Actual Price (¢/kWh)',
-            data: prices,
-            borderColor: 'green',
-            tension: 0.3,
-            fill: false
+            label: "Actual Price (¢/kWh)",
+            data: values,
+            borderColor: "green",
+            borderWidth: 2,
+            fill: false,
+            tension: 0.2
           }]
         },
         options: {
           responsive: true,
           scales: {
-            x: { ticks: { autoSkip: true, maxTicksLimit: 12 } },
             y: { beginAtZero: true }
           }
         }
       });
     }
 
-    fetchPrice();
-    setInterval(fetchPrice, 60000); // refresh every minute
+    document.getElementById("notifyBtn").addEventListener("click", () => {
+      Notification.requestPermission().then(permission => {
+        if (permission === "granted") {
+          alert("Notifications enabled!");
+        }
+      });
+    });
+
+    // Fetch data every 1 minute
+    fetchPrices();
+    setInterval(fetchPrices, 60000);
   </script>
 </body>
 </html>
